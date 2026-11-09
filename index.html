@@ -232,7 +232,7 @@ function parseMessage(t){
   const side = (t.match(/\b(buy|sell)\b/i) || [])[1];
   const eLine = (t.match(/entry[^:\n]*:?[ \t]*([^\n]+)/i) || [])[1];
   const e = eLine ? nums(eLine) : [];
-  const tm = t.match(/\btime\s*:?\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)?/i);
+  const tm = t.match(/\btime\b\s*(?:is|at|:|-|=)?\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)?/i) || t.match(/(\d{1,2}):(\d{2})\s*([ap]m)/i);
   const p = {
     side: side ? side[0].toUpperCase() + side.slice(1).toLowerCase() : "",
     lo: e.length ? Math.min(...e) : NaN, hi: e.length ? Math.max(...e) : NaN,
