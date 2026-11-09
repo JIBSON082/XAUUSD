@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Signal Checker</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0f1a1d;--panel:#16252a;--line:#27393f;--text:#ece6d3;--dim:#8fa1a3;--gold:#d7ac4e;--up:#62c492;--down:#e5695c;--warn:#e0b24f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+.price{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:16px}
+.price .sym{color:var(--dim);font-weight:500}
+.price .num{font:400 68px/1 "Instrument Serif",Georgia,serif;color:var(--gold);transition:color .4s}
+.price .num.up{color:var(--up)}.price .num.down{color:var(--down)}
+.price .meta{color:var(--dim);font-size:13px;margin-left:auto}
+details{margin:14px 0}summary{cursor:pointer;color:var(--dim);font-size:13px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;margin-top:14px}
+h2{font:400 26px "Instrument Serif",Georgia,serif;margin:0 0 12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--dim)}
+input,select,textarea{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:9px 10px;font:inherit;width:100%}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+button{background:var(--gold);color:#1a1405;border:0;border-radius:4px;padding:10px 18px;font:600 15px inherit;cursor:pointer}
+button.ghost{background:none;color:var(--dim);border:1px solid var(--line);padding:5px 10px;font-size:13px;font-weight:500}
+textarea{min-height:190px;resize:vertical;line-height:1.45}
+.row{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+.err{color:var(--down);font-size:13px}
+.card{border-left:4px solid var(--dim);background:var(--panel);border-radius:0 6px 6px 0;padding:14px 16px;margin-top:12px}
+.card.win{border-color:var(--up)}.card.loss{border-color:var(--down)}.card.wait{border-color:var(--warn)}
+.card .top{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.card .res{font:400 26px "Instrument Serif",Georgia,serif}
+.win .res{color:var(--up)}.loss .res{color:var(--down)}.wait .res{color:var(--warn)}
+.lv{color:var(--dim);font-size:13px;margin:4px 0 8px}
+.ev{font-size:13px;margin:2px 0}.ev b{font-weight:600}
+.note{color:var(--warn);font-size:12.5px;margin-top:6px}
+.empty{color:var(--dim);margin-top:14px}
+</style>
+</head>
+<body>
+<main>
+  <section class="price" aria-live="polite">
+    <span class="sym">XAU/USD</span>
+    <span class="num" id="px">—</span>
+    <span class="meta" id="pxmeta">Add your API key to start</span>
+  </section>
+
+  <details id="keybox">
+    <summary>API key (Twelve Data)</summary>
+    <div class="row">
+      <input id="key" type="password" placeholder="Paste your free Twelve Data API key" autocomplete="off" style="flex:1;min-width:200px">
+      <button id="savekey" type="button">Save key</button>
+    </div>
+    <p class="lv">Get a free key at twelvedata.com. It stays in this browser only. Live price refreshes every 60 seconds to respect the free limit.</p>
+  </details>
+
+  <section class="box">
+    <h2>Paste signal</h2>
+    <textarea id="msg" placeholder="Paste the full signal message here"></textarea>
+    <div class="grid" style="margin-top:12px">
+      <label>Signal date<input id="date" type="date"></label>
+      <label>Message time zone (UTC offset, hours)<input id="tz" type="number" step="0.5"></label>
+      <label>Entry type
+        <select id="mode">
+          <option value="touch">Wait for price to reach the entry zone</option>
+          <option value="market">Enter at signal time</option>
+        </select>
+      </label>
+    </div>
+    <p class="lv">Messages only carry a time, so pick the date they were sent. You can paste several signals at once.</p>
+    <div class="row">
+      <button id="check" type="button">Read &amp; check</button>
+      <span class="err" id="err"></span>
+    </div>
+    <details>
+    <summary>Edit or enter manually</summary>
+    <div class="grid" style="margin-top:12px">
+      <label>Entry (from)<input id="entry" type="number" step="0.01" inputmode="decimal"></label>
+      <label>Entry (to, optional)<input id="entry2" type="number" step="0.01" inputmode="decimal"></label>
+      <label>Stop loss<input id="sl" type="number" step="0.01" inputmode="decimal"></label>
+      <label>TP1<input id="tp1" type="number" step="0.01" inputmode="decimal"></label>
+      <label>TP2<input id="tp2" type="number" step="0.01" inputmode="decimal"></label>
+      <label>TP3<input id="tp3" type="number" step="0.01" inputmode="decimal"></label>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <label>Signal time<input id="time" type="datetime-local"></label>
+      <label>Side
+        <select id="side"><option value="">Auto</option><option>Buy</option><option>Sell</option></select>
+      </label>
+    </div>
+    <div class="row"><button id="checkman" type="button">Check these levels</button></div>
+    </details>
+  </section>
+
+  <section id="list"></section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const API = "https://api.twelvedata.com";
+let apiKey = "", signals = [], lastPx = null;
+
+const store = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } },
+  set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+};
+
+/* ---------- setup ---------- */
+apiKey = store.get("td_key", "");
+signals = store.get("signals", []);
+$("tz").value = -new Date().getTimezoneOffset() / 60;
+{ const n = new Date(); $("date").value = n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0") + "-" + String(n.getDate()).padStart(2,"0"); }
+if (apiKey) { $("key").value = apiKey; } else { $("keybox").open = true; }
+$("savekey").onclick = () => {
+  apiKey = $("key").value.trim(); store.set("td_key", apiKey);
+  $("keybox").open = false; pollPrice();
+};
+
+/* ---------- live price ---------- */
+async function pollPrice(){
+  if (!apiKey) return;
+  try {
+    const r = await fetch(`${API}/price?symbol=XAU/USD&apikey=${encodeURIComponent(apiKey)}`);
+    const d = await r.json();
+    if (d.status === "error") throw new Error(d.message);
+    const p = parseFloat(d.price), el = $("px");
+    el.textContent = p.toFixed(2);
+    el.className = "num" + (lastPx === null || p === lastPx ? "" : p > lastPx ? " up" : " down");
+    lastPx = p;
+    $("pxmeta").textContent = "Updated " + new Date().toLocaleTimeString();
+  } catch(e){ $("pxmeta").textContent = "Price error: " + e.message; }
+}
+setInterval(() => { if (!document.hidden) pollPrice(); }, 60000);
+pollPrice();
+
+/* ---------- candles ---------- */
+function pickInterval(spanMs){
+  const d = spanMs / 864e5;
+  if (d <= 3)  return ["1min", 60e3];
+  if (d <= 14) return ["5min", 300e3];
+  if (d <= 45) return ["15min", 900e3];
+  if (d <= 90) return ["30min", 1800e3];
+  return ["1h", 3600e3];
+}
+const fmt = ms => new Date(ms).toISOString().slice(0,16).replace("T"," ") + " UTC";
+const td = ms => new Date(ms).toISOString().slice(0,19).replace("T"," ");
+
+async function getCandles(from){
+  const now = Date.now();
+  const [iv, ivMs] = pickInterval(now - from);
+  const start = Math.floor(from / ivMs) * ivMs;
+  const url = `${API}/time_series?symbol=XAU/USD&interval=${iv}&start_date=${encodeURIComponent(td(start))}` +
+              `&end_date=${encodeURIComponent(td(now))}&timezone=UTC&order=ASC&outputsize=5000&apikey=${encodeURIComponent(apiKey)}`;
+  const r = await fetch(url), d = await r.json();
+  if (d.status === "error") throw new Error(d.message);
+  const candles = (d.values || []).map(v => ({
+    t: Date.parse(v.datetime.replace(" ", "T") + "Z"),
+    h: +v.high, l: +v.low
+  }));
+  return { candles, iv, capped: candles.length >= 5000 };
+}
+
+/* ---------- the check ---------- */
+function evaluate(s, candles){
+  const lo = s.lo ?? s.entry, hi = s.hi ?? s.entry;
+  const dir = s.side ? (s.side === "Buy" ? 1 : -1) : (s.tp1 > lo ? 1 : -1);
+  const tps = [s.tp1, s.tp2, s.tp3];
+  const out = { entered: s.mode === "market", entryT: s.mode === "market" ? s.time : null, hit: 0, events: [], sl: null, ambiguous: false };
+  for (const c of candles){
+    if (!out.entered){
+      if (c.l <= hi && c.h >= lo){ out.entered = true; out.entryT = c.t; } else continue;
+    }
+    const adverse = dir > 0 ? c.l : c.h, favour = dir > 0 ? c.h : c.l;
+    const slHit = dir > 0 ? adverse <= s.sl : adverse >= s.sl;
+    const reached = tps.filter(tp => dir > 0 ? favour >= tp : favour <= tp).length;
+    if (slHit){
+      if (reached > out.hit) out.ambiguous = true;   // same candle touched both: assume SL first
+      out.sl = c.t; break;
+    }
+    while (out.hit < reached){ out.events.push({ label: "TP" + (out.hit + 1), t: c.t }); out.hit++; }
+    if (out.hit === 3) break;
+  }
+  return out;
+}
+
+function describe(o){
+  if (!o.entered) return { text: "Entry not triggered", cls: "wait" };
+  if (o.sl)  return o.hit ? { text: `TP${o.hit} hit, then SL`, cls: "win" } : { text: "SL hit", cls: "loss" };
+  if (o.hit === 3) return { text: "TP3 hit", cls: "win" };
+  if (o.hit) return { text: `TP${o.hit} hit, still open`, cls: "win" };
+  return { text: "Entered, still open", cls: "wait" };
+}
+
+async function run(s){
+  const { candles, iv, capped } = await getCandles(s.time);
+  if (!candles.length) throw new Error("No price data returned for that time (market may have been closed).");
+  s.out = evaluate(s, candles); s.iv = iv; s.capped = capped; s.checked = Date.now();
+}
+
+/* ---------- UI ---------- */
+let idc = 0;
+const nums = str => (str.match(/\d[\d,]*\.?\d*/g) || []).map(x => parseFloat(x.replace(/,/g, "")));
+
+function parseMessage(t){
+  const one = re => { const m = t.match(re); return m ? parseFloat(m[1].replace(/,/g, "")) : NaN; };
+  const side = (t.match(/\b(buy|sell)\b/i) || [])[1];
+  const eLine = (t.match(/entry[^:\n]*:?[ \t]*([^\n]+)/i) || [])[1];
+  const e = eLine ? nums(eLine) : [];
+  const tm = t.match(/\btime\s*:?\s*(\d{1,2})(?::(\d{2}))?\s*([ap]m)?/i);
+  const p = {
+    side: side ? side[0].toUpperCase() + side.slice(1).toLowerCase() : "",
+    lo: e.length ? Math.min(...e) : NaN, hi: e.length ? Math.max(...e) : NaN,
+    sl: one(/\bSL\b[^\d\n]*([\d,]+\.?\d*)/i),
+    tps: [1,2,3].map(i => one(new RegExp("TP\\s*" + i + "[^\\d\\n]*([\\d,]+\\.?\\d*)", "i")))
+  };
+  if (tm){
+    let h = +tm[1]; const ap = (tm[3] || "").toLowerCase();
+    if (ap) h = (h % 12) + (ap === "pm" ? 12 : 0);
+    p.hh = h; p.mm = +(tm[2] || 0);
+  }
+  return p;
+}
+
+const toMs = (dateStr, hh, mm) => {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return Date.UTC(y, m - 1, d, hh, mm) - (parseFloat($("tz").value) || 0) * 3600e3;
+};
+
+function build(p){
+  if ([p.lo, p.hi, p.sl, ...p.tps].some(x => !isFinite(x))) throw new Error("Couldn’t read every level. The message needs an entry, SL, TP1, TP2 and TP3.");
+  const [t1, t2, t3] = p.tps;
+  const buy = p.side ? p.side === "Buy" : t1 > p.hi;
+  const ok = buy ? p.sl < p.lo && p.hi < t1 && t1 < t2 && t2 < t3
+                 : p.sl > p.hi && p.lo > t1 && t1 > t2 && t2 > t3;
+  if (!ok) throw new Error("Levels don’t line up. A buy needs SL below entry and TPs rising; a sell is the reverse.");
+  return { lo:p.lo, hi:p.hi, sl:p.sl, tp1:t1, tp2:t2, tp3:t3, side: buy ? "Buy" : "Sell", mode: $("mode").value, time: p.time, id: Date.now() + (idc++) };
+}
+
+async function submit(list){
+  $("err").textContent = "";
+  if (!apiKey){ $("keybox").open = true; $("err").textContent = "Save your API key first."; return; }
+  const btns = [$("check"), $("checkman")]; btns.forEach(b => b.disabled = true);
+  try {
+    const made = [];
+    for (const p of list){ const s = build(p); await run(s); made.push(s); }
+    signals.unshift(...made.reverse()); store.set("signals", signals); render();
+    $("msg").value = "";
+  } catch(e){ $("err").textContent = e.message; }
+  btns.forEach(b => b.disabled = false);
+}
+
+$("check").onclick = () => {
+  const raw = $("msg").value.trim();
+  if (!raw){ $("err").textContent = "Paste a signal message first."; return; }
+  if (!$("date").value){ $("err").textContent = "Pick the signal date."; return; }
+  const chunks = raw.split(/(?=🚨)/).filter(c => /\bSL\b/i.test(c));
+  try {
+    const list = (chunks.length ? chunks : [raw]).map(c => {
+      const p = parseMessage(c);
+      if (p.hh === undefined) throw new Error("No time found in the message. Use “Edit or enter manually”.");
+      p.time = toMs($("date").value, p.hh, p.mm);
+      if (p.time > Date.now()) p.time -= 864e5;   // time later than now: assume it was sent yesterday
+      return p;
+    });
+    submit(list);
+  } catch(e){ $("err").textContent = e.message; }
+};
+
+$("checkman").onclick = () => {
+  const n = id => parseFloat($(id).value);
+  if (!$("time").value){ $("err").textContent = "Pick the signal time."; return; }
+  const [dt, tm] = $("time").value.split("T"), [hh, mm] = tm.split(":").map(Number);
+  const ms = toMs(dt, hh, mm);
+  if (ms > Date.now()){ $("err").textContent = "That signal time is in the future."; return; }
+  const a = n("entry"), b = isNaN(n("entry2")) ? a : n("entry2");
+  submit([{ side: $("side").value, lo: Math.min(a, b), hi: Math.max(a, b), sl: n("sl"), tps: [n("tp1"), n("tp2"), n("tp3")], time: ms }]);
+};
+
+async function recheck(id){
+  const s = signals.find(x => x.id === id);
+  try { await run(s); store.set("signals", signals); render(); } catch(e){ alert(e.message); }
+}
+function remove(id){ signals = signals.filter(x => x.id !== id); store.set("signals", signals); render(); }
+
+function render(){
+  const el = $("list");
+  if (!signals.length){ el.innerHTML = '<p class="empty">No signals yet. Add one above and the result appears here.</p>'; return; }
+  el.innerHTML = signals.map(s => {
+    const o = s.out, r = describe(o);
+    const ev = [];
+    if (o.entryT) ev.push(`<div class="ev"><b>Entered</b> ${fmt(o.entryT)}</div>`);
+    o.events.forEach(e => ev.push(`<div class="ev"><b>${e.label} hit</b> ${fmt(e.t)}</div>`));
+    if (o.sl) ev.push(`<div class="ev"><b>SL hit</b> ${fmt(o.sl)}</div>`);
+    const notes = [];
+    if (o.ambiguous) notes.push("SL and a take profit were both touched in the same candle, so this counts the stop loss first.");
+    if (s.iv !== "1min") notes.push(`Checked on ${s.iv} candles because the signal is older; results are less precise.`);
+    if (s.capped) notes.push("Data limit reached before today, so later price moves may be missing.");
+    return `<article class="card ${r.cls}">
+      <div class="top"><span class="res">${r.text}</span><span class="lv">${s.side} · ${fmt(s.time)}</span></div>
+      <div class="lv">Entry ${s.lo ?? s.entry}${s.hi !== undefined && s.hi !== s.lo ? " – " + s.hi : ""} · SL ${s.sl} · TP ${s.tp1} / ${s.tp2} / ${s.tp3}</div>
+      ${ev.join("")}
+      ${notes.map(n => `<div class="note">${n}</div>`).join("")}
+      <div class="row"><button class="ghost" onclick="recheck(${s.id})">Re-check</button><button class="ghost" onclick="remove(${s.id})">Delete</button></div>
+    </article>`;
+  }).join("");
+}
+render();
+</script>
+</body>
+</html>
