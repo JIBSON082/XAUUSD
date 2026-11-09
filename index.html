@@ -35,6 +35,7 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
 .lv{color:var(--dim);font-size:13px;margin:4px 0 8px}
 .ev{font-size:13px;margin:2px 0}.ev b{font-weight:600}
 .note{color:var(--warn);font-size:12.5px;margin-top:6px}
+.big{font:400 52px/1 "Instrument Serif",Georgia,serif}.big.pos{color:var(--up)}.big.neg{color:var(--down)}
 .empty{color:var(--dim);margin-top:14px}
 </style>
 </head>
@@ -91,6 +92,21 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
     </div>
     <div class="row"><button id="checkman" type="button">Check these levels</button></div>
     </details>
+  </section>
+
+  <section class="box" id="sumbox" style="display:none">
+    <h2>Day summary</h2>
+    <div class="grid">
+      <label>Day<select id="day"></select></label>
+      <label>Pip size ($)<input id="pip" type="number" step="0.01" value="0.1"></label>
+      <label>Counting
+        <select id="pmode">
+          <option value="thirds">Split in thirds (1/3 closes at each TP)</option>
+          <option value="full">Full position, SL is a full loss</option>
+        </select>
+      </label>
+    </div>
+    <div id="sum" style="margin-top:14px"></div>
   </section>
 
   <section id="list"></section>
@@ -284,6 +300,7 @@ async function recheck(id){
 function remove(id){ signals = signals.filter(x => x.id !== id); store.set("signals", signals); render(); }
 
 function render(){
+  renderSummary();
   const el = $("list");
   if (!signals.length){ el.innerHTML = '<p class="empty">No signals yet. Add one above and the result appears here.</p>'; return; }
   el.innerHTML = signals.map(s => {
@@ -299,12 +316,64 @@ function render(){
     return `<article class="card ${r.cls}">
       <div class="top"><span class="res">${r.text}</span><span class="lv">${s.side} · ${fmt(s.time)}</span></div>
       <div class="lv">Entry ${s.lo ?? s.entry}${s.hi !== undefined && s.hi !== s.lo ? " – " + s.hi : ""} · SL ${s.sl} · TP ${s.tp1} / ${s.tp2} / ${s.tp3}</div>
-      ${ev.join("")}
+      ${pipLine(s)}${ev.join("")}
       ${notes.map(n => `<div class="note">${n}</div>`).join("")}
       <div class="row"><button class="ghost" onclick="recheck(${s.id})">Re-check</button><button class="ghost" onclick="remove(${s.id})">Delete</button></div>
     </article>`;
   }).join("");
 }
+
+/* ---------- pips ---------- */
+const dayOf = s => new Date(s.time + (parseFloat($("tz").value) || 0) * 3600e3).toISOString().slice(0, 10);
+
+function tradePips(s){
+  const o = s.out;
+  if (!o.entered || !(o.sl || o.hit === 3)) return null;      // only finished trades count
+  const lo = s.lo ?? s.entry, hi = s.hi ?? s.entry, e = (lo + hi) / 2;
+  const dir = s.side ? (s.side === "Buy" ? 1 : -1) : (s.tp1 > e ? 1 : -1);
+  const ps = parseFloat($("pip").value) || 0.1;
+  const d = x => dir * (x - e) / ps;
+  const sl = d(s.sl), tp = [d(s.tp1), d(s.tp2), d(s.tp3)];
+  if ($("pmode").value === "full") return o.sl ? sl : tp[2];
+  let sum = 0;
+  for (let i = 0; i < 3; i++) sum += i < o.hit ? tp[i] : sl;
+  return sum / 3;
+}
+
+const signed = n => (n >= 0 ? "+" : "") + n.toFixed(1);
+
+function pipLine(s){
+  const p = tradePips(s);
+  if (p === null) return "";
+  return `<div class="ev"><b style="color:var(--${p >= 0 ? "up" : "down"})">${signed(p)} pips</b></div>`;
+}
+
+function renderSummary(){
+  const box = $("sumbox");
+  if (!signals.length){ box.style.display = "none"; return; }
+  box.style.display = "";
+  const cur = $("day").value;
+  const days = [...new Set(signals.map(dayOf))].sort().reverse();
+  $("day").innerHTML = days.map(d => `<option value="${d}">${d}</option>`).join("");
+  $("day").value = days.includes(cur) ? cur : days[0];
+  const list = signals.filter(x => dayOf(x) === $("day").value);
+  let total = 0, wins = 0, losses = 0, open = 0, skipped = 0;
+  list.forEach(x => {
+    const p = tradePips(x);
+    if (p === null){ x.out.entered ? open++ : skipped++; return; }
+    total += p; p >= 0 ? wins++ : losses++;
+  });
+  const extra = [open ? `${open} still open` : "", skipped ? `${skipped} not triggered` : ""].filter(Boolean).join(", ");
+  $("sum").innerHTML = `<div class="big ${total >= 0 ? "pos" : "neg"}">${signed(total)} pips</div>
+    <div class="lv">${wins + losses} closed · ${wins} win${wins === 1 ? "" : "s"} · ${losses} loss${losses === 1 ? "" : "es"}${extra ? " · " + extra : ""}</div>
+    <div class="lv">Open trades and untriggered entries are left out. Entry price is the middle of the entry zone.</div>`;
+}
+
+$("pip").value = store.get("pip", 0.1);
+$("pmode").value = store.get("pmode", "thirds");
+["day", "pip", "pmode", "tz"].forEach(id => $(id).addEventListener("change", () => {
+  store.set("pip", parseFloat($("pip").value) || 0.1); store.set("pmode", $("pmode").value); render();
+}));
 render();
 </script>
 </body>
