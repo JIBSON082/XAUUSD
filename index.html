@@ -62,6 +62,8 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
     <label>Upload screenshots (pick as many as you like)
       <input id="shots" type="file" accept="image/*" multiple>
     </label>
+    <div class="lv" id="status" aria-live="polite" style="color:var(--gold)"></div>
+    <div class="err" id="err" role="alert"></div>
     <p class="lv">Only trade setups are picked up. Other messages in the screenshots are ignored. Or paste the text instead:</p>
     <textarea id="msg" placeholder="Paste the full signal message here"></textarea>
     <div class="grid" style="margin-top:12px">
@@ -77,9 +79,7 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
     <p class="lv">Messages only carry a time, so pick the date they were sent. Every setup in one upload gets that date.</p>
     <div class="row">
       <button id="check" type="button">Read &amp; check</button>
-      <span class="err" id="err"></span>
     </div>
-    <div class="lv" id="status" aria-live="polite"></div>
     <details>
     <summary>Edit or enter manually</summary>
     <div class="grid" style="margin-top:12px">
@@ -318,6 +318,7 @@ async function submit(list, bad = []){
     if (failed) parts.push(`${failed} couldn’t be checked`);
     $("status").textContent = parts.join(". ") + (parts.length ? "." : "");
     if (msg && !made.length && !dup) $("err").textContent = msg;
+    if (made.length) $("sumbox").scrollIntoView({ behavior: "smooth" });
   } catch(e){ $("err").textContent = e.message; }
   btns.forEach(b => b.disabled = false);
 }
@@ -365,6 +366,7 @@ $("shots").onchange = async e => {
   if (!$("date").value){ $("err").textContent = "Pick the signal date first."; return; }
   if (!window.Tesseract){ $("err").textContent = "The screenshot reader didn’t load. Check your internet connection and reload."; return; }
   let text = "", worker, i = 0;
+  $("status").textContent = `Loading the screenshot reader for ${files.length} image${files.length === 1 ? "" : "s"}…`;
   try {
     worker = await Tesseract.createWorker("eng", 1, { logger: m => {
       if (m.status === "recognizing text") $("status").textContent = `Reading screenshot ${i + 1} of ${files.length}… ${Math.round(m.progress * 100)}%`;
@@ -376,6 +378,11 @@ $("shots").onchange = async e => {
     await worker.terminate();
   } catch(err){ $("err").textContent = "Couldn’t read the screenshots: " + err.message; $("status").textContent = ""; return; }
   $("status").textContent = "";
+  if (!splitSetups(text).length){
+    $("msg").value = text.trim();
+    $("status").textContent = "Read the screenshots but found no trade setup. The text it saw is in the box below so you can check it.";
+    return;
+  }
   go(text);
 };
 
@@ -470,6 +477,9 @@ $("pmode").value = store.get("pmode", "thirds");
 ["day", "pip", "pmode", "tz"].forEach(id => $(id).addEventListener("change", () => {
   store.set("pip", parseFloat($("pip").value) || 0.1); store.set("pmode", $("pmode").value); render();
 }));
+["status", "err"].forEach(id => new MutationObserver(() => {
+  if ($(id).textContent) $(id).scrollIntoView({ behavior: "smooth", block: "nearest" });
+}).observe($(id), { childList: true, characterData: true, subtree: true }));
 render();
 </script>
 </body>
