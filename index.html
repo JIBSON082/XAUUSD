@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gold Signal Checker</title>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" defer></script>
 <style>
 :root{--bg:#0f1a1d;--panel:#16252a;--line:#27393f;--text:#ece6d3;--dim:#8fa1a3;--gold:#d7ac4e;--up:#62c492;--down:#e5695c;--warn:#e0b24f}
 *{box-sizing:border-box}
@@ -57,7 +58,11 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
   </details>
 
   <section class="box">
-    <h2>Paste signal</h2>
+    <h2>Add signals</h2>
+    <label>Upload screenshots (pick as many as you like)
+      <input id="shots" type="file" accept="image/*" multiple>
+    </label>
+    <p class="lv">Only trade setups are picked up. Other messages in the screenshots are ignored. Or paste the text instead:</p>
     <textarea id="msg" placeholder="Paste the full signal message here"></textarea>
     <div class="grid" style="margin-top:12px">
       <label>Signal date<input id="date" type="date"></label>
@@ -69,11 +74,12 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
         </select>
       </label>
     </div>
-    <p class="lv">Messages only carry a time, so pick the date they were sent. You can paste several signals at once.</p>
+    <p class="lv">Messages only carry a time, so pick the date they were sent. Every setup in one upload gets that date.</p>
     <div class="row">
       <button id="check" type="button">Read &amp; check</button>
       <span class="err" id="err"></span>
     </div>
+    <div class="lv" id="status" aria-live="polite"></div>
     <details>
     <summary>Edit or enter manually</summary>
     <div class="grid" style="margin-top:12px">
@@ -174,7 +180,7 @@ async function getCandles(from){
     t: Date.parse(v.datetime.replace(" ", "T") + "Z"),
     h: +v.high, l: +v.low
   }));
-  return { candles, iv, capped: candles.length >= 5000 };
+  return { candles, iv, ivMs, capped: candles.length >= 5000 };
 }
 
 /* ---------- the check ---------- */
@@ -208,18 +214,25 @@ function describe(o){
   return { text: "Entered, still open", cls: "wait" };
 }
 
-async function run(s){
-  const { candles, iv, capped } = await getCandles(s.time);
+async function run(s, pre){
+  const r = pre || await getCandles(s.time);
+  const from = Math.floor(s.time / r.ivMs) * r.ivMs;
+  const candles = r.candles.filter(c => c.t >= from);
   if (!candles.length) throw new Error("No price data returned for that time (market may have been closed).");
-  s.out = evaluate(s, candles); s.iv = iv; s.capped = capped; s.checked = Date.now();
+  s.out = evaluate(s, candles); s.iv = r.iv; s.capped = r.capped; s.checked = Date.now();
 }
 
 /* ---------- UI ---------- */
 let idc = 0;
-const nums = str => (str.match(/\d[\d,]*\.?\d*/g) || []).map(x => parseFloat(x.replace(/,/g, "")));
+const parseNum = t => {
+  t = t.replace(/[.,]+$/, "");
+  const m = t.match(/^(.*?)[.,](\d{1,2})$/);
+  return parseFloat(m ? m[1].replace(/[.,]/g, "") + "." + m[2] : t.replace(/[.,]/g, ""));
+};
+const nums = str => (str.match(/\d[\d,.]*/g) || []).map(parseNum);
 
 function parseMessage(t){
-  const one = re => { const m = t.match(re); return m ? parseFloat(m[1].replace(/,/g, "")) : NaN; };
+  const one = re => { const m = t.match(re); return m ? parseNum(m[1]) : NaN; };
   const side = (t.match(/\b(buy|sell)\b/i) || [])[1];
   const eLine = (t.match(/entry[^:\n]*:?[ \t]*([^\n]+)/i) || [])[1];
   const e = eLine ? nums(eLine) : [];
@@ -227,8 +240,8 @@ function parseMessage(t){
   const p = {
     side: side ? side[0].toUpperCase() + side.slice(1).toLowerCase() : "",
     lo: e.length ? Math.min(...e) : NaN, hi: e.length ? Math.max(...e) : NaN,
-    sl: one(/\bSL\b[^\d\n]*([\d,]+\.?\d*)/i),
-    tps: [1,2,3].map(i => one(new RegExp("TP\\s*" + i + "[^\\d\\n]*([\\d,]+\\.?\\d*)", "i")))
+    sl: one(/(?:\bSL\b|stop\s*loss)[^\d\n]*(\d[\d,.]*)/i),
+    tps: [1,2,3].map(i => one(new RegExp("TP\\s*" + (i === 1 ? "[1Il|]" : i) + "[^\\d\\n]*(\\d[\\d,.]*)", "i")))
   };
   if (tm){
     let h = +tm[1]; const ap = (tm[3] || "").toLowerCase();
@@ -236,6 +249,26 @@ function parseMessage(t){
     p.hh = h; p.mm = +(tm[2] || 0);
   }
   return p;
+}
+
+/* Finds each trade setup in a block of text and drops everything else. */
+function splitSetups(text){
+  const L = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const entries = [];
+  L.forEach((l, i) => { if (/entry/i.test(l) && /\d/.test(l)) entries.push(i); });
+  const starts = entries.map((i, k) => {
+    const floor = k ? entries[k-1] + 1 : 0, low = Math.max(floor, i - 6);
+    let st = i;
+    for (let j = i - 1; j >= low; j--) if (/xauusd|gold|scalp/i.test(L[j])) st = j;
+    if (st === i) for (let j = i - 1; j >= low; j--) if (/\b(buy|sell)\b/i.test(L[j])) st = j;
+    return st;
+  });
+  return entries.map((i, k) => {
+    const next = k + 1 < entries.length ? starts[k+1] : L.length;
+    let end = Math.min(next, i + 9);
+    for (let j = i; j < next; j++) if (/\btime\b/i.test(L[j])){ end = Math.min(end, j + 1); break; }
+    return L.slice(starts[k], end).join("\n");
+  }).filter(c => /\bSL\b|stop\s*loss|TP\s*[1Il|23]/i.test(c));
 }
 
 const toMs = (dateStr, hh, mm) => {
@@ -253,34 +286,97 @@ function build(p){
   return { lo:p.lo, hi:p.hi, sl:p.sl, tp1:t1, tp2:t2, tp3:t3, side: buy ? "Buy" : "Sell", mode: $("mode").value, time: p.time, id: Date.now() + (idc++) };
 }
 
-async function submit(list){
-  $("err").textContent = "";
+const keyOf = s => [s.time, s.lo ?? s.entry, s.hi ?? s.entry, s.sl, s.tp1, s.tp2, s.tp3].join("|");
+
+async function submit(list, bad = []){
+  $("err").textContent = ""; $("status").textContent = "";
   if (!apiKey){ $("keybox").open = true; $("err").textContent = "Save your API key first."; return; }
   const btns = [$("check"), $("checkman")]; btns.forEach(b => b.disabled = true);
   try {
-    const made = [];
-    for (const p of list){ const s = build(p); await run(s); made.push(s); }
-    signals.unshift(...made.reverse()); store.set("signals", signals); render();
-    $("msg").value = "";
+    const unread = bad.slice(); let dup = 0, failed = 0, msg = "";
+    const seen = new Set(signals.map(keyOf)), ok = [], made = [];
+    for (const p of list){
+      let s;
+      try { s = build(p); } catch(e){ msg = e.message; unread.push(p.raw || ""); continue; }
+      const k = keyOf(s);
+      if (seen.has(k)){ dup++; continue; }
+      seen.add(k); ok.push(s);
+    }
+    if (ok.length){
+      const pre = await getCandles(Math.min(...ok.map(s => s.time)));
+      for (const s of ok){
+        try { await run(s, pre); made.push(s); } catch(e){ msg = e.message; failed++; }
+      }
+    }
+    if (made.length){ signals.unshift(...made.reverse()); store.set("signals", signals); render(); }
+    if (list.some(p => p.raw !== undefined)) $("msg").value = unread.filter(Boolean).join("\n\n");
+    const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+    const parts = [];
+    if (made.length) parts.push(`Added ${n(made.length, "setup")}`);
+    if (dup) parts.push(`${dup} already added`);
+    if (unread.length) parts.push(`${n(unread.length, "setup")} couldn’t be read cleanly${unread.some(Boolean) ? ", text is in the box so you can fix it" : ""}`);
+    if (failed) parts.push(`${failed} couldn’t be checked`);
+    $("status").textContent = parts.join(". ") + (parts.length ? "." : "");
+    if (msg && !made.length && !dup) $("err").textContent = msg;
   } catch(e){ $("err").textContent = e.message; }
   btns.forEach(b => b.disabled = false);
 }
 
+function go(raw){
+  if (!$("date").value){ $("err").textContent = "Pick the signal date."; return; }
+  let chunks = splitSetups(raw);
+  if (!chunks.length && /\bSL\b/i.test(raw)) chunks = [raw];
+  if (!chunks.length){ $("err").textContent = ""; $("status").textContent = "No trade setup found."; return; }
+  const list = [], bad = [];
+  chunks.forEach(c => {
+    const p = parseMessage(c);
+    if (p.hh === undefined){ bad.push(c); return; }
+    p.raw = c;
+    p.time = toMs($("date").value, p.hh, p.mm);
+    if (p.time > Date.now()) p.time -= 864e5;   // time later than now: assume it was sent yesterday
+    list.push(p);
+  });
+  submit(list, bad);
+}
+
 $("check").onclick = () => {
   const raw = $("msg").value.trim();
-  if (!raw){ $("err").textContent = "Paste a signal message first."; return; }
-  if (!$("date").value){ $("err").textContent = "Pick the signal date."; return; }
-  const chunks = raw.split(/(?=🚨)/).filter(c => /\bSL\b/i.test(c));
+  if (!raw){ $("err").textContent = "Paste a signal message or upload screenshots."; return; }
+  go(raw);
+};
+
+/* Makes a screenshot easier for OCR: enlarge small images, grey-scale, flip dark mode to dark-on-light. */
+async function prep(file){
+  const bmp = await createImageBitmap(file), k = bmp.width < 1000 ? 2 : 1;
+  const cv = document.createElement("canvas"); cv.width = bmp.width * k; cv.height = bmp.height * k;
+  const x = cv.getContext("2d"); x.drawImage(bmp, 0, 0, cv.width, cv.height);
+  const im = x.getImageData(0, 0, cv.width, cv.height), d = im.data; let sum = 0;
+  for (let i = 0; i < d.length; i += 4){ d[i] = d[i+1] = d[i+2] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]; sum += d[i]; }
+  if (sum / (d.length / 4) < 128) for (let i = 0; i < d.length; i += 4) d[i] = d[i+1] = d[i+2] = 255 - d[i];
+  x.putImageData(im, 0, 0);
+  return cv;
+}
+
+$("shots").onchange = async e => {
+  const files = [...e.target.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  e.target.value = "";
+  if (!files.length) return;
+  $("err").textContent = "";
+  if (!$("date").value){ $("err").textContent = "Pick the signal date first."; return; }
+  if (!window.Tesseract){ $("err").textContent = "The screenshot reader didn’t load. Check your internet connection and reload."; return; }
+  let text = "", worker, i = 0;
   try {
-    const list = (chunks.length ? chunks : [raw]).map(c => {
-      const p = parseMessage(c);
-      if (p.hh === undefined) throw new Error("No time found in the message. Use “Edit or enter manually”.");
-      p.time = toMs($("date").value, p.hh, p.mm);
-      if (p.time > Date.now()) p.time -= 864e5;   // time later than now: assume it was sent yesterday
-      return p;
-    });
-    submit(list);
-  } catch(e){ $("err").textContent = e.message; }
+    worker = await Tesseract.createWorker("eng", 1, { logger: m => {
+      if (m.status === "recognizing text") $("status").textContent = `Reading screenshot ${i + 1} of ${files.length}… ${Math.round(m.progress * 100)}%`;
+    }});
+    for (i = 0; i < files.length; i++){
+      const { data } = await worker.recognize(await prep(files[i]));
+      text += "\n" + data.text;
+    }
+    await worker.terminate();
+  } catch(err){ $("err").textContent = "Couldn’t read the screenshots: " + err.message; $("status").textContent = ""; return; }
+  $("status").textContent = "";
+  go(text);
 };
 
 $("checkman").onclick = () => {
