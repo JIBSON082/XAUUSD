@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gold Signal Checker</title>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" defer></script>
 <style>
 :root{--bg:#0f1a1d;--panel:#16252a;--line:#27393f;--text:#ece6d3;--dim:#8fa1a3;--gold:#d7ac4e;--up:#62c492;--down:#e5695c;--warn:#e0b24f}
 *{box-sizing:border-box}
@@ -59,12 +58,9 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
 
   <section class="box">
     <h2>Add signals</h2>
-    <label>Upload screenshots (pick as many as you like)
-      <input id="shots" type="file" accept="image/*" multiple>
-    </label>
     <div class="lv" id="status" aria-live="polite" style="color:var(--gold)"></div>
     <div class="err" id="err" role="alert"></div>
-    <p class="lv">Only trade setups are picked up. Other messages in the screenshots are ignored. Or paste the text instead:</p>
+    <p class="lv">Paste one signal or a whole chat. Only trade setups are picked up and other messages are ignored.</p>
     <textarea id="msg" placeholder="Paste the full signal message here"></textarea>
     <div class="grid" style="margin-top:12px">
       <label>Signal date<input id="date" type="date"></label>
@@ -76,7 +72,7 @@ textarea{min-height:190px;resize:vertical;line-height:1.45}
         </select>
       </label>
     </div>
-    <p class="lv">Messages only carry a time, so pick the date they were sent. Every setup in one upload gets that date.</p>
+    <p class="lv">Messages only carry a time, so pick the date they were sent. Every setup you paste at once gets that date.</p>
     <div class="row">
       <button id="check" type="button">Read &amp; check</button>
     </div>
@@ -342,48 +338,8 @@ function go(raw){
 
 $("check").onclick = () => {
   const raw = $("msg").value.trim();
-  if (!raw){ $("err").textContent = "Paste a signal message or upload screenshots."; return; }
+  if (!raw){ $("err").textContent = "Paste a signal message first."; return; }
   go(raw);
-};
-
-/* Makes a screenshot easier for OCR: enlarge small images, grey-scale, flip dark mode to dark-on-light. */
-async function prep(file){
-  const bmp = await createImageBitmap(file), k = bmp.width < 1000 ? 2 : 1;
-  const cv = document.createElement("canvas"); cv.width = bmp.width * k; cv.height = bmp.height * k;
-  const x = cv.getContext("2d"); x.drawImage(bmp, 0, 0, cv.width, cv.height);
-  const im = x.getImageData(0, 0, cv.width, cv.height), d = im.data; let sum = 0;
-  for (let i = 0; i < d.length; i += 4){ d[i] = d[i+1] = d[i+2] = 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]; sum += d[i]; }
-  if (sum / (d.length / 4) < 128) for (let i = 0; i < d.length; i += 4) d[i] = d[i+1] = d[i+2] = 255 - d[i];
-  x.putImageData(im, 0, 0);
-  return cv;
-}
-
-$("shots").onchange = async e => {
-  const files = [...e.target.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  e.target.value = "";
-  if (!files.length) return;
-  $("err").textContent = "";
-  if (!$("date").value){ $("err").textContent = "Pick the signal date first."; return; }
-  if (!window.Tesseract){ $("err").textContent = "The screenshot reader didn’t load. Check your internet connection and reload."; return; }
-  let text = "", worker, i = 0;
-  $("status").textContent = `Loading the screenshot reader for ${files.length} image${files.length === 1 ? "" : "s"}…`;
-  try {
-    worker = await Tesseract.createWorker("eng", 1, { logger: m => {
-      if (m.status === "recognizing text") $("status").textContent = `Reading screenshot ${i + 1} of ${files.length}… ${Math.round(m.progress * 100)}%`;
-    }});
-    for (i = 0; i < files.length; i++){
-      const { data } = await worker.recognize(await prep(files[i]));
-      text += "\n" + data.text;
-    }
-    await worker.terminate();
-  } catch(err){ $("err").textContent = "Couldn’t read the screenshots: " + err.message; $("status").textContent = ""; return; }
-  $("status").textContent = "";
-  if (!splitSetups(text).length){
-    $("msg").value = text.trim();
-    $("status").textContent = "Read the screenshots but found no trade setup. The text it saw is in the box below so you can check it.";
-    return;
-  }
-  go(text);
 };
 
 $("checkman").onclick = () => {
